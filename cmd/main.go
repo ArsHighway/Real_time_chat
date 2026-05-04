@@ -15,7 +15,7 @@ func main() {
 	go hub.Run(ctx)
 	r := chi.NewRouter()
 	r.With(middleware.JWTMiddleware).Get("/global", func(w http.ResponseWriter, r *http.Request) {
-		ws.ServeWS(*hub, w, r)
+		ws.ServeWS(hub, w, r)
 	})
 	http.ListenAndServe(":8080", r)
 }

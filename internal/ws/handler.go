@@ -17,40 +17,33 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func ServeWS(hub Hub, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-
+func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	val := r.Context().Value(userKey)
 	if val == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	JWTUser := val.(int)
-
+	userID := val.(int)
 	username := r.URL.Query().Get("username")
 	if username == "" {
 		username = "anonym"
 	}
 
-	client := NewClient(conn, &hub)
-	client.username = username
-	client.jwtuser = JWTUser
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
 
 	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+
+	client := NewClient(conn, hub, ctx, cancel)
+	client.userID = userID
+	client.username = username
 
 	hub.register <- client
 
-	go client.ReadLoop(ctx)
-	go client.WriteLoop(ctx)
-	go client.PingLoop(ctx)
-
-	go func() {
-		<-ctx.Done()
-		conn.Close()
-	}()
+	go client.readPump()
+	go client.writePump()
+	go client.pingLoop()
 }

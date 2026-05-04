@@ -2,55 +2,69 @@ package ws
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 type Client struct {
-	conn        *websocket.Conn
-	sendMessage chan Message
-	clientID    int
-	username    string
-	hub         *Hub
-	jwtuser     int
+	conn *websocket.Conn
+	send chan Event
+
+	userID   int
+	username string
+
+	hub   *Hub
+	rooms map[string]bool
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-func NewClient(conn *websocket.Conn, hub *Hub) *Client {
+func NewClient(
+	conn *websocket.Conn,
+	hub *Hub,
+	ctx context.Context,
+	cancel context.CancelFunc,
+) *Client {
+
 	c := &Client{
-		conn:        conn,
-		hub:         hub,
-		sendMessage: make(chan Message, 256),
+		conn:   conn,
+		hub:    hub,
+		send:   make(chan Event, 256),
+		ctx:    ctx,
+		cancel: cancel,
+		rooms:  make(map[string]bool),
 	}
+
 	c.conn.SetReadLimit(1024)
 	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+
 	c.conn.SetPongHandler(func(appData string) error {
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
+
 	return c
 }
 
-func (c *Client) WriteLoop(ctx context.Context) {
-	defer func() {
-		//log
-		c.conn.Close()
-	}()
+func (c *Client) writePump() {
+	defer c.conn.Close()
+
 	for {
 		select {
-		case <-ctx.Done():
+
+		case <-c.ctx.Done():
 			return
-		case msg, ok := <-c.sendMessage:
+
+		case msg, ok := <-c.send:
 			if !ok {
 				return
 			}
-			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			data, err := json.Marshal(msg)
-			if err != nil {
-				return
-			}
-			err = c.conn.WriteMessage(websocket.TextMessage, data)
+
+			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+
+			err := c.conn.WriteJSON(msg)
 			if err != nil {
 				return
 			}
@@ -58,47 +72,46 @@ func (c *Client) WriteLoop(ctx context.Context) {
 	}
 }
 
-func (c *Client) ReadLoop(ctx context.Context) {
+func (c *Client) readPump() {
 	defer func() {
+		c.cancel()
 		c.hub.unregister <- c
-		_ = c.conn.WriteControl(
-			websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-			time.Now().Add(time.Second),
-		)
 		c.conn.Close()
 	}()
+
 	for {
-		_, data, err := c.conn.ReadMessage()
+		var event Event
+
+		err := c.conn.ReadJSON(&event)
 		if err != nil {
-			break
+			return
 		}
-		var input InputMessage
-		err = json.Unmarshal(data, &input)
-		if err != nil {
-			continue
+
+		event.UserID = c.userID
+		event.Username = c.username
+
+		select {
+		case <-c.ctx.Done():
+			return
+		case c.hub.incoming <- event:
 		}
-		msg := Message{
-			UserID: c.clientID,
-			Time:   time.Now(),
-			Text:   c.username + ": " + input.Text,
-		}
-		c.hub.broadcast <- msg
 	}
 }
 
-func (c *Client) PingLoop(ctx context.Context) {
-
+func (c *Client) pingLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+
 	for {
 		select {
-		case <-ctx.Done():
+
+		case <-c.ctx.Done():
 			return
+
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			err := c.conn.WriteMessage(websocket.PingMessage, nil)
-			if err != nil {
+
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		}
