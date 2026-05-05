@@ -64,6 +64,10 @@ func (h *Hub) handleClientEvent(ctx context.Context, event Event) {
 		return
 	}
 
+	if event.Type == "message" {
+		_ = h.appendRoomMessage(ctx, event.Room, data)
+	}
+
 	_ = h.Publish(ctx, channel, string(data))
 }
 
@@ -97,6 +101,7 @@ func (h *Hub) Subscriber(ctx context.Context) {
 			case "join":
 				if client := h.findClient(event.UserID); client != nil {
 					h.joinRoom(event.Room, event.UserID, client)
+					h.pushHistory(ctx, client, event.Room)
 				}
 			case "leave":
 				h.leaveRoom(event.Room, event.UserID)
