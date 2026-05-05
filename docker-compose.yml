@@ -1,4 +1,4 @@
-яservices:
+services:
   app:
     build:
       context: .
