@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"os"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -19,6 +20,11 @@ type Hub struct {
 }
 
 func NewHub() *Hub {
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
 	return &Hub{
 		rooms:      make(map[string]*Room),
 		users:      make(map[int]*Client),
@@ -26,7 +32,7 @@ func NewHub() *Hub {
 		unregister: make(chan *Client),
 		incoming:   make(chan Event, 256),
 		rdb: redis.NewClient(&redis.Options{
-			Addr: "localhost:6379",
+			Addr: redisAddr,
 		}),
 	}
 }
